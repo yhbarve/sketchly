@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react';
 import type { Socket } from 'socket.io-client';
 
 interface ChatMessage {
@@ -14,36 +14,48 @@ interface ChatPaneProps {
 }
 
 export default function ChatPane({ socket, username }: ChatPaneProps) {
-    const [input, setInput] = useState("");
-    const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [input, setInput] = useState('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-    useEffect(() => {
-        const handleMessage = (msg: ChatMessage) => {
-            setMessages((ms) => [...ms, msg]);
-        }
+  // Listen for incoming messages
+  useEffect(() => {
+    const handler = (msg: ChatMessage) => {
+      setMessages((ms) => [...ms, msg]);
+    };
+    socket.on('chat:message', handler);
+    return () => {
+      socket.off('chat:message', handler);
+    };
+  }, [socket]);
 
-        socket.on("chat:message", handleMessage);
-
-        return () => {socket.off("chat:message", handleMessage)};
-
-    }, [socket]);
-
-    function sendMessage() {
-        if (!input.trim()) return;
-        const msg: ChatMessage = {
-            userId: socket.id,
-            username,
-            text: input.trim(),
-            timestamp: Date.now()
-        };
-        socket.emit("chat:message", msg);
-        setInput("");
+  // Auto-scroll to bottom when messages change
+  useEffect(() => {
+    const c = containerRef.current;
+    if (c) {
+      c.scrollTop = c.scrollHeight;
     }
+  }, [messages]);
 
-    return (
-        <div className="w-72 flex flex-col ml-5">
-      {/* Messages container */}
-      <div className="flex-1 overflow-y-auto border border-gray-300 rounded p-2 bg-white">
+  const sendMessage = () => {
+    if (!input.trim()) return;
+    const msg: ChatMessage = {
+      userId: socket.id,
+      username,
+      text: input.trim(),
+      timestamp: Date.now(),
+    };
+    socket.emit('chat:message', msg);
+    setInput('');
+  };
+
+  return (
+    <div className="w-72 flex flex-col ml-5 h-full">
+      {/* Messages container, capped at half viewport, scrollable */}
+      <div
+        ref={containerRef}
+        className="overflow-y-auto border border-gray-300 rounded p-2 bg-white min-h-64 max-h-[50vh]"
+      >
         {messages.map((m, i) => (
           <div key={i} className="mb-2">
             <span className="font-semibold text-gray-800 mr-1">{m.username}:</span>
@@ -53,12 +65,12 @@ export default function ChatPane({ socket, username }: ChatPaneProps) {
       </div>
 
       {/* Input area */}
-      <div className="mt-2 flex">
+      <div className="mt-2 flex space-x-2">
         <input
-          className="flex-1 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-400"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+          onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
           placeholder="Type a message…"
         />
         <button
@@ -69,5 +81,5 @@ export default function ChatPane({ socket, username }: ChatPaneProps) {
         </button>
       </div>
     </div>
-    )
+  );
 }

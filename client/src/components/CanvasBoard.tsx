@@ -1,4 +1,3 @@
-// client/src/components/CanvasBoard.tsx
 import React, { useRef, useEffect, useState } from "react";
 import type { Socket } from "socket.io-client";
 
@@ -23,12 +22,32 @@ export default function CanvasBoard({
 }: CanvasBoardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
-
   const [remoteCursors, setRemoteCursors] = useState<
     Record<string, { x: number; y: number }>
   >({});
 
-  // Single handler for all draw-related events
+  // Resize canvas buffer to match its CSS size
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const resize = () => {
+      const { width, height } = canvas.getBoundingClientRect();
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+      }
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => {
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  // Drawing logic
   const handleDraw = (ev: DrawEvent) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -43,17 +62,35 @@ export default function CanvasBoard({
     } else if (ev.type === "draw") {
       ctx.lineTo(ev.x, ev.y);
       ctx.stroke();
-    } else if (ev.type === "end") {
+    } else {
       ctx.closePath();
     }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    const x = e.clientX;
-    const y = e.clientY;
-    socket.emit("cursor-move", { x, y, userId: socket.id });
-  };
+  // Subscribe to init-state & draw
+  useEffect(() => {
+    if (!socket) return;
 
+    // replay entire history
+    socket.on("init-state", (history: DrawEvent[]) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      history.forEach(handleDraw);
+    });
+
+    // live strokes
+    socket.on("draw", handleDraw);
+
+    return () => {
+      socket.off("init-state");
+      socket.off("draw", handleDraw);
+    };
+  }, [socket]);
+
+  // Cursor moves
   useEffect(() => {
     if (!socket) return;
     const onCursor = (data: { x: number; y: number; userId: string }) => {
@@ -68,78 +105,32 @@ export default function CanvasBoard({
     };
   }, [socket]);
 
-  useEffect(() => {
-    if (!socket) return;
-
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    // Replay any existing history first
-    socket.on("init-state", (history: DrawEvent[]) => {
-      history.forEach(handleDraw);
-    });
-
-    // Then subscribe to new draw events
-    socket.on("draw", handleDraw);
-
-    return () => {
-      socket.off("init-state", () => {});
-      socket.off("draw", handleDraw);
-    };
-  }, [socket]);
-
-  useEffect(() => {
-    if (!socket) return;
-    const canvas = canvasRef.current!;
-    const ctx = canvas.getContext("2d")!;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    // Replay history
-    socket.on("init-state", (history: DrawEvent[]) => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      history.forEach(handleDraw);
-    });
-
-    // Live draws
-    socket.on("draw", handleDraw);
-
-    return () => {
-      socket.off("init-state", () => {});
-      socket.off("draw", handleDraw);
-    };
-  }, [socket]);
-
-  // Emit helpers
+  // Emit draw events
   const emitEvent = (type: DrawEvent["type"], x: number, y: number) => {
     socket.emit("draw", { type, x, y, color, width: lineWidth } as DrawEvent);
   };
 
-  // Pointer event handlers
-  const handlePointerDown = (e: React.PointerEvent) => {
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  // Handlers
+  const getPos = (e: React.PointerEvent) => {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  };
 
-    // Begin locally
+  const handlePointerDown = (e: React.PointerEvent) => {
+    const { x, y } = getPos(e);
     handleDraw({ type: "begin", x, y, color, width: lineWidth });
     emitEvent("begin", x, y);
     setIsDrawing(true);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!isDrawing) return;
-    const rect = canvasRef.current!.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // broadcast cursor
+    const { x: cx, y: cy } = getPos(e);
+    socket.emit("cursor-move", { x: cx, y: cy, userId: socket.id });
 
-    // Draw locally
+    if (!isDrawing) return;
+    const { x, y } = getPos(e);
     handleDraw({ type: "draw", x, y, color, width: lineWidth });
     emitEvent("draw", x, y);
   };
@@ -151,35 +142,23 @@ export default function CanvasBoard({
   };
 
   return (
-    <div>
+    <div className="relative w-full h-full">
       <canvas
         ref={canvasRef}
         id="sketchly-canvas"
-        width={800}
-        height={600}
-        style={{ border: "1px solid #ccc", touchAction: "none" }}
+        className="w-full h-full border border-gray-200 bg-white rounded-md"
         onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
-        onPointerMove={(e) => {
-          handlePointerMove(e);
-          handleMouseMove(e);
-        }}
       />
 
+      {/* Render remote cursors */}
       {Object.entries(remoteCursors).map(([id, pos]) => (
         <div
           key={id}
-          style={{
-            position: "absolute",
-            left: pos.x,
-            top: pos.y,
-            width: 10,
-            height: 10,
-            borderRadius: "50%",
-            background: "red",
-            pointerEvents: "none",
-          }}
+          className="pointer-events-none absolute w-3 h-3 bg-red-500 rounded-full transform -translate-x-1/2 -translate-y-1/2"
+          style={{ left: pos.x, top: pos.y }}
         />
       ))}
     </div>
