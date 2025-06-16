@@ -20,7 +20,7 @@ export default function Toolbar({
           type="color"
           value={color}
           onChange={(e) => onColorChange(e.target.value)}
-          className="h-8 w-8 p-0 border-0 rounded-full"
+          className="h-8 w-8"
         />
       </label>
 

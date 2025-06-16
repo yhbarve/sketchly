@@ -31,13 +31,22 @@ export default function CanvasBoard({
     const canvas = canvasRef.current;
     if (!canvas) return;
     const resize = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      // Save current canvas image
+      const ctx = canvas.getContext("2d");
+      const imageData = ctx?.getImageData(0, 0, canvas.width, canvas.height);
+
       const { width, height } = canvas.getBoundingClientRect();
       canvas.width = width;
       canvas.height = height;
-      const ctx = canvas.getContext("2d");
+
       if (ctx) {
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
+        // Restore image after resize
+        if (imageData) ctx.putImageData(imageData, 0, 0);
       }
     };
     resize();
